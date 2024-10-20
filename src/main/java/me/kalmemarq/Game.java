@@ -10,6 +10,8 @@ import me.kalmemarq.entity.model.ZombieModel;
 import me.kalmemarq.particle.Particle;
 import me.kalmemarq.particle.ParticleSystem;
 import me.kalmemarq.render.*;
+import me.kalmemarq.render.NativeImage.Mirroring;
+import me.kalmemarq.render.NativeImage.PixelFormat;
 import me.kalmemarq.render.vertex.BufferBuilder;
 import me.kalmemarq.render.vertex.VertexBuffer;
 import me.kalmemarq.render.vertex.VertexLayout;
@@ -32,13 +34,18 @@ import org.lwjgl.system.MemoryStack;
 import org.lwjgl.system.MemoryUtil;
 
 import java.nio.ByteBuffer;
+import java.nio.file.Path;
+import java.time.LocalDateTime;
+import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Iterator;
 import java.util.List;
 
-public class Game implements Runnable {
+public class Game implements Runnable, Window.EventHandler {
     private static final Logger LOGGER = LogManager.getLogger("Main");
+    private static final String VERSION = "rd161348";
     private static final float MOUSE_SENSITIVITY = 0.08f;
+    private static final DateTimeFormatter SCREENSHOT_DATE_FORMATTER = DateTimeFormatter.ofPattern("yyyy-MM-dd_HH-mm-ss-SSS");
 
     private static int entityRenderCount;
 
@@ -64,12 +71,11 @@ public class Game implements Runnable {
     private final ZombieModel zombieModel = new ZombieModel();
     private boolean renderEntityHitboxes = false;
     private final ParticleSystem particleSystem = new ParticleSystem();
-    private ImGuiLayer imGuiLayer;
-    private boolean rendeInfoOverlay;
-
     private Frustum capturedFrustum;
-
     private int selectedBlockId = 1;
+    private boolean rendeInfoOverlay;
+    private int fps;
+    private int tps;
 
     public Game() {
         instance = this;
@@ -85,10 +91,9 @@ public class Game implements Runnable {
 
     @Override
     public void run() {
-        this.window = new Window(1024, 768, "mc-rd160052");
-        GLFW.glfwSetCursorPosCallback(this.window.getHandle(), (_w, x, y) -> this.onCursorPos(x, y));
-        GLFW.glfwSetKeyCallback(this.window.getHandle(), (_w, k, sc, a, m) -> this.onKey(k, a));
-        GLFW.glfwSetMouseButtonCallback(this.window.getHandle(), (_w, b, a, m) -> this.onMouseButton(b, a));
+        this.window = new Window(1024, 768, VERSION);
+        this.window.setIcon();
+        this.window.addEventHandler(this);
 
         LOGGER.info("LWJGL {}", Version.getVersion());
         LOGGER.info("GLFW {}", GLFW.glfwGetVersionString());
@@ -98,7 +103,6 @@ public class Game implements Runnable {
         Callback debugMessageCallback = GLUtil.setupDebugMessageCallback(System.err);
         GL45.glDebugMessageControl(GL45.GL_DEBUG_SOURCE_API, GL45.GL_DEBUG_TYPE_OTHER, GL45.GL_DONT_CARE, 0x20071, false);
 
-        this.imGuiLayer = new ImGuiLayer(this.window);
         this.framebuffer = new Framebuffer(this.window.getWidth(), this.window.getHeight());
 
         this.terrainTexture = new Texture();
@@ -126,22 +130,19 @@ public class Game implements Runnable {
 
         this.window.grabMouse();
 
-        long lastTime = TimeUtils.getCurrentMillis();
+        long lastTime = TimeUtils.millisTime();
         int frameCounter = 0;
-
-        int fps = 0;
-        int tps = 0;
 
         try {
             GL11.glClearColor(0.5f, 0.8f, 1f, 1f);
 
             int tickCounter = 0;
-            long prevTimeMillis = TimeUtils.getCurrentMillis();
+            long prevTimeMillis = TimeUtils.millisTime();
             int ticksPerSecond = 20;
             float tickDelta = 0;
 
             while (!this.window.shouldClose()) {
-                long now = TimeUtils.getCurrentMillis();
+                long now = TimeUtils.millisTime();
                 float lastFrameDuration = (float)(now - prevTimeMillis) / (1000f / ticksPerSecond);
                 prevTimeMillis = now;
                 tickDelta += lastFrameDuration;
@@ -156,7 +157,8 @@ public class Game implements Runnable {
                 this.render(tickDelta);
 
                 if (this.rendeInfoOverlay) {
-                    this.imGuiLayer.startFrame();
+                    ImGuiLayer imGuiLayer = this.window.getImGuiLayer();
+                    imGuiLayer.startFrame();
 
                     ImGui.setNextWindowPos(6, 6);
                     ImGui.setNextWindowBgAlpha(0.35f);
@@ -166,16 +168,16 @@ public class Game implements Runnable {
                     }
                     ImGui.end();
 
-                    this.imGuiLayer.endFrame();
+                    imGuiLayer.endFrame();
                 }
 
                 this.window.update();
                 ++frameCounter;
 
-                while (TimeUtils.getCurrentMillis() - lastTime > 1000L) {
+                while (TimeUtils.millisTime() - lastTime > 1000L) {
                     lastTime += 1000L;
-                    fps = frameCounter;
-                    tps = tickCounter;
+                    this.fps = frameCounter;
+                    this.tps = tickCounter;
                     frameCounter = 0;
                     tickCounter = 0;
                 }
@@ -199,9 +201,9 @@ public class Game implements Runnable {
             this.charTexture.close();
             this.blockSelectionVertexBuffer.close();
             this.framebuffer.close();
+            this.window.getImGuiLayer().close();
             this.particleSystem.close();
             Tessellator.cleanup();
-            this.imGuiLayer.close();
 
             GL30.glBindVertexArray(0);
             GL30.glBindBuffer(GL20.GL_ARRAY_BUFFER, 0);
@@ -288,7 +290,7 @@ public class Game implements Runnable {
 
             this.selectionShader.bind();
             this.selectionShader.setUniform("uProjection", this.projection);
-            this.selectionShader.setUniform("uColor", 1f, 1f, 1f, (float)Math.sin((double)TimeUtils.getCurrentMillis() / 100.0d) * 0.2f + 0.4f);
+            this.selectionShader.setUniform("uColor", 1f, 1f, 1f, (float)Math.sin((double)TimeUtils.millisTime() / 100.0d) * 0.2f + 0.4f);
             this.modelView.translate(this.blockHitResult.x(), this.blockHitResult.y(), this.blockHitResult.z());
             this.selectionShader.setUniform("uModelView", this.modelView);
 
@@ -366,7 +368,6 @@ public class Game implements Runnable {
         GL11.glViewport(0, 0, this.window.getWidth(), this.window.getHeight());
         GL11.glClear(GL11.GL_COLOR_BUFFER_BIT);
 
-//        this.framebuffer.blitTo(0, 0, 0, this.window.getWidth(), this.window.getHeight());
         this.framebuffer.draw();
     }
 
@@ -452,7 +453,8 @@ public class Game implements Runnable {
         builder.vertex(maxX, maxY, minZ); builder.vertex(maxX, maxY, maxZ);
     }
 
-    private void onCursorPos(double x, double y) {
+    @Override
+    public void onCursorPos(double x, double y) {
         this.mouse[2] = x - this.mouse[0];
         this.mouse[3] = y - this.mouse[1];
         this.mouse[0] = x;
@@ -468,7 +470,8 @@ public class Game implements Runnable {
         this.mouse[3] = 0;
     }
 
-    private void onMouseButton(int button, int action) {
+    @Override
+    public void onMouseButton(int button, int action) {
         if (action != GLFW.GLFW_RELEASE && this.blockHitResult != null) {
             if (button == 1) {
                 Block prevBlock = this.world.getBlock(this.blockHitResult.x(), this.blockHitResult.y(), this.blockHitResult.z());
@@ -487,7 +490,8 @@ public class Game implements Runnable {
         }
     }
 
-    private void onKey(int key, int action) {
+    @Override
+    public void onKey(int key, int action) {
         if (action == GLFW.GLFW_PRESS) {
             if (key == GLFW.GLFW_KEY_ESCAPE) {
                 GLFW.glfwSetWindowShouldClose(this.window.getHandle(), true);
@@ -529,6 +533,14 @@ public class Game implements Runnable {
                 } else {
                     this.capturedFrustum = null;
                 }
+            } else if (key == GLFW.GLFW_KEY_F2) {
+                NativeImage image = NativeImage.readFromTexture(this.framebuffer.getColorAttachmentTxr(), this.framebuffer.getWidth(), this.framebuffer.getHeight(), PixelFormat.RGB);
+                image.flip(Mirroring.VERTICAL);
+                Path screenshotsPath = Path.of("screenshots");
+                if (IOUtils.ensureDirectory(screenshotsPath)) {
+                    image.saveTo(screenshotsPath.resolve(SCREENSHOT_DATE_FORMATTER.format(LocalDateTime.now()) + ".png"));
+                }
+                image.close();
             }
         }
     }

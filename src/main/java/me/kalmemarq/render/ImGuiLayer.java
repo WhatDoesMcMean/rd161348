@@ -16,6 +16,7 @@ public class ImGuiLayer implements Closeable {
 
     public ImGuiLayer(Window window) {
         this.window = window;
+        this.init();
     }
 
     private void init() {
@@ -30,10 +31,6 @@ public class ImGuiLayer implements Closeable {
     }
 
     public void startFrame() {
-        if (this.imGuiGlfw == null) {
-            this.init();
-        }
-
         this.imGuiGl3.newFrame();
         this.imGuiGlfw.newFrame();
         ImGui.newFrame();
